@@ -5,6 +5,9 @@ from typing import Generator, Any
 from eth_account import Account
 from eth_pydantic_types import HexStr
 from eth_utils import to_checksum_address
+from gmx_python_sdk.scripts.v2.get.get_open_positions import GetOpenPositions
+from gmx_python_sdk.scripts.v2.gmx_utils import get_reader_contract, get_datastore_contract, ConfigManager
+from gmx_python_sdk.scripts.v2.utils.keys import ORDER_LIST
 from web3 import Web3, HTTPProvider
 
 from eth_defi.chain import install_chain_middleware
@@ -35,6 +38,7 @@ CHAIN_CONFIG = {
         "wsol_address": "0x2bcC6D6CdBbDC0a4071e48bb3B969b06B3330c07",  # WSOL on Arbitrum
         "arb_address": "0x912CE59144191C1204E64559FE8253a0e49E6548",  # ARB on Arbitrum
         "native_token_address": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",  # WETH
+        "gmx": "0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a",
     },
     "avalanche": {
         "rpc_env_var": "AVALANCHE_JSON_RPC_URL",
@@ -83,7 +87,7 @@ def test_address(anvil_private_key) -> HexAddress:
 def large_eth_holder() -> HexAddress:
     """A random account picked from Arbitrum Smart chain that holds a lot of ETH.
 
-    This account is unlocked on Anvil, so you have access to good ETH stash.
+    This account is unlocked on anvil, so you have access to good ETH stash.
 
     `To find large holder accounts, use bscscan <https://arbiscan.io/accounts>`_.
     """
@@ -95,7 +99,7 @@ def large_eth_holder() -> HexAddress:
 def large_wbtc_holder() -> HexAddress:
     """A random account picked from Arbitrum Smart chain that holds a lot of WBTC.
 
-    This account is unlocked on Anvil, so you have access to good WBTC stash.
+    This account is unlocked on anvil, so you have access to good WBTC stash.
 
     `To find large holder accounts, use arbiscan <https://arbiscan.io/accounts>`_.
     """
@@ -107,7 +111,7 @@ def large_wbtc_holder() -> HexAddress:
 def large_wavax_holder() -> HexAddress:
     """A random account picked from Avalanche Smart chain that holds a lot of WAVAX.
 
-    This account is unlocked on Anvil, so you have access to good WAVAX stash.
+    This account is unlocked on anvil, so you have access to good WAVAX stash.
 
     `To find large holder accounts, use bscscan <https://snowtrace.io/accounts>`_.
     """
@@ -120,7 +124,7 @@ def large_wavax_holder() -> HexAddress:
 def large_wbtc_holder_avalanche() -> HexAddress:
     """A random account picked from Avalanche Smart chain that holds a lot of WBTC.
 
-    This account is unlocked on Anvil, so you have access to good WBTC stash.
+    This account is unlocked on anvil, so you have access to good WBTC stash.
 
     `To find large holder accounts, use arbiscan <https://snowtrace.io/accounts>`_.
     """
@@ -132,7 +136,7 @@ def large_wbtc_holder_avalanche() -> HexAddress:
 def large_usdc_holder_arbitrum() -> HexAddress:
     """A random account picked from Arbitrum Smart chain that holds a lot of USDC.
 
-    This account is unlocked on Anvil, so you have access to good USDC stash.
+    This account is unlocked on anvil, so you have access to good USDC stash.
     """
     # https://arbiscan.io/address/0xb38e8c17e38363af6ebdcb3dae12e0243582891d#asset-multichain
     return HexAddress(HexStr("0xB38e8c17e38363aF6EbdCb3dAE12e0243582891D"))
@@ -142,7 +146,7 @@ def large_usdc_holder_arbitrum() -> HexAddress:
 def large_usdc_holder_avalanche() -> HexAddress:
     """A random account picked from Avalanche Smart chain that holds a lot of USDC.
 
-    This account is unlocked on Anvil, so you have access to good USDC stash.
+    This account is unlocked on anvil, so you have access to good USDC stash.
     """
     # https://snowscan.xyz/address/0x9f8c163cba728e99993abe7495f06c0a3c8ac8b9
     return HexAddress(HexStr("0x9f8c163cBA728e99993ABe7495F06c0A3c8Ac8b9"))
@@ -150,22 +154,34 @@ def large_usdc_holder_avalanche() -> HexAddress:
 
 @pytest.fixture()
 def large_weth_holder_arbitrum() -> HexAddress:
-    # # https://arbiscan.io/address/0x70d95587d40A2caf56bd97485aB3Eec10Bee6336
-    return to_checksum_address("0x70d95587d40A2caf56bd97485aB3Eec10Bee6336")
+    # # https://arbiscan.io/address/0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf
+    return to_checksum_address("0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf")
 
 
 @pytest.fixture()
 def large_link_holder_avalanche() -> HexAddress:
     """A random account picked from Avalanche Smart chain that holds a lot of LINK.
 
-    This account is unlocked on Anvil, so you have access to good LINK stash.
+    This account is unlocked on anvil, so you have access to good LINK stash.
     """
     # https://snowscan.xyz/address/0x4e9f683A27a6BdAD3FC2764003759277e93696e6
     return HexAddress(HexStr("0x4e9f683A27a6BdAD3FC2764003759277e93696e6"))
 
 
 @pytest.fixture()
+def large_link_holder_arbitrum() -> HexAddress:
+    # https://arbiscan.io/address/0x7f1fa204bb700853D36994DA19F830b6Ad18455C
+    return HexAddress(HexStr("0x7f1fa204bb700853D36994DA19F830b6Ad18455C"))
+
+
+@pytest.fixture()
 def large_arb_holder_arbitrum() -> HexAddress:
+    # Binance Hot wallet 20
+    return HexAddress(HexStr("0xF977814e90dA44bFA03b6295A0616a897441aceC"))
+
+
+@pytest.fixture()
+def large_gmx_holder_arbitrum() -> HexAddress:
     # Binance Hot wallet 20
     return HexAddress(HexStr("0xF977814e90dA44bFA03b6295A0616a897441aceC"))
 
@@ -203,11 +219,12 @@ def anvil_chain_fork(
     large_usdc_holder_avalanche,
     large_wbtc_holder_avalanche,
     large_link_holder_avalanche,
+    large_link_holder_arbitrum,
     gmx_controller_arbitrum,
     large_weth_holder_arbitrum,
     gmx_keeper_arbitrum,
 ) -> Generator[str, Any, None]:
-    """Create a testable fork of the live chain using Anvil."""
+    """Create a testable fork of the live chain using anvil."""
     unlocked_addresses = [large_eth_holder, large_wbtc_holder]
 
     if chain_name == "arbitrum":
@@ -215,6 +232,7 @@ def anvil_chain_fork(
         unlocked_addresses.append(gmx_controller_arbitrum)
         unlocked_addresses.append(large_weth_holder_arbitrum)
         unlocked_addresses.append(gmx_keeper_arbitrum)
+        unlocked_addresses.append(large_link_holder_arbitrum)
     elif chain_name == "avalanche":
         unlocked_addresses.append(large_wavax_holder)
         unlocked_addresses.append(large_usdc_holder_avalanche)
@@ -234,7 +252,7 @@ def anvil_chain_fork(
     try:
         yield launch.json_rpc_url
     finally:
-        # Wind down Anvil process after the test is complete
+        # Wind down anvil process after the test is complete
         launch.close(log_level=logging.ERROR)
 
 
@@ -348,6 +366,12 @@ def usdc(web3_fork: Web3, chain_name) -> TokenDetails:
     """USDC token details for the specified chain."""
     usdc_address = CHAIN_CONFIG[chain_name]["usdc_address"]
     return fetch_erc20_details(web3_fork, usdc_address)
+
+@pytest.fixture()
+def gmx(web3_fork: Web3, chain_name) -> TokenDetails:
+    """GMX token details for the specified chain."""
+    gmx_address = CHAIN_CONFIG[chain_name]["gmx"]
+    return fetch_erc20_details(web3_fork, gmx_address)
 
 
 @pytest.fixture()
@@ -465,22 +489,39 @@ def wallet_with_wbtc(
 
 
 @pytest.fixture()
-def wallet_with_link(web3_fork, chain_name, test_address: HexAddress, large_link_holder_avalanche) -> None:
+def wallet_with_link(web3_fork, chain_name, test_address: HexAddress, large_link_holder_avalanche, large_link_holder_arbitrum) -> None:
     """Fund the test wallet with LINK."""
     amount = 10000 * 10**18
+
     if chain_name == "avalanche":
-        link_address = "0x5947BB275c521040051D82396192181b413227A3"
+        link_address = CHAIN_CONFIG[chain_name]["link_address"]
         link = fetch_erc20_details(web3_fork, link_address)
-        # 10k LINK tokens
-        try:
-            link.contract.functions.transfer(test_address, amount).transact({"from": large_link_holder_avalanche})
-        except Exception as e:
-            # If the transfer fails, skip the test instead of failing
-            pytest.skip(f"Could not transfer LINK to test wallet: {str(e)}")
-    # else:
-    #     link_address = to_checksum_address(CHAIN_CONFIG[chain_name]["link_address"])
-    #
-    #     web3_fork.provider.make_request("tenderly_addErc20Balance", [link_address, [test_address], hex(amount)])
+        holder_address = large_link_holder_avalanche
+    elif chain_name == "arbitrum":
+        link_address = CHAIN_CONFIG[chain_name]["link_address"]
+        link = fetch_erc20_details(web3_fork, link_address)
+        holder_address = large_link_holder_arbitrum
+    else:
+        pytest.skip(f"LINK funding not supported for chain: {chain_name}")
+        return
+
+    # 10k LINK tokens
+    try:
+        # Set balance for the holder
+        web3_fork.provider.make_request("anvil_setBalance", [holder_address, hex(amount)])
+
+        # Transfer LINK to test address
+        tx = link.contract.functions.transfer(test_address, amount).transact({"from": holder_address})
+        tx_hash = web3_fork.eth.wait_for_transaction_receipt(tx)
+        # print(f"LINK transfer tx_hash: {tx_hash.transactionHash.hex()}")
+        #
+        # # Verify balance
+        # balance = link.contract.functions.balanceOf(test_address).call()
+        # print(f"LINK balance after transfer: {balance / 10 ** 18}")
+
+    except Exception as e:
+        # If the transfer fails, skip the test instead of failing
+        pytest.skip(f"Could not transfer LINK to test wallet: {str(e)}")
 
 
 @pytest.fixture()
@@ -498,13 +539,47 @@ def wallet_with_arb(web3_fork, chain_name, test_address: HexAddress, large_arb_h
 
 
 @pytest.fixture()
+def wallet_with_weth(web3_fork, chain_name, test_address: HexAddress, large_weth_holder_arbitrum: HexAddress) -> None:
+    """Fund the test wallet with LINK."""
+    amount = 5000 * 10**18
+    if chain_name == "arbitrum":
+        try:
+            weth_address = to_checksum_address(CHAIN_CONFIG[chain_name]["native_token_address"])
+            weth = fetch_erc20_details(web3_fork, weth_address)
+            # for gas
+            web3_fork.provider.make_request("anvil_setBalance", [large_weth_holder_arbitrum, hex(amount)])
+            weth.contract.functions.transfer(test_address, amount).transact({"from": large_weth_holder_arbitrum})
+        except Exception as e:
+            # If the transfer fails, skip the test instead of failing
+            pytest.skip(f"Could not transfer WETH to test wallet: {str(e)}")
+
+
+@pytest.fixture()
+def wallet_with_gmx(web3_fork, chain_name, test_address: HexAddress, large_gmx_holder_arbitrum: HexAddress) -> None:
+    """Fund the test wallet with GMX."""
+    amount = 50000 * 10**18
+    if chain_name == "arbitrum":
+        try:
+            gmx_address = to_checksum_address(CHAIN_CONFIG[chain_name]["gmx"])
+            gmx = fetch_erc20_details(web3_fork, gmx_address)
+            # for gas
+            web3_fork.provider.make_request("anvil_setBalance", [large_gmx_holder_arbitrum, hex(amount)])
+            gmx.contract.functions.transfer(test_address, amount).transact({"from": large_gmx_holder_arbitrum})
+        except Exception as e:
+            # If the transfer fails, skip the test instead of failing
+            pytest.skip(f"Could not transfer GMX to test wallet: {str(e)}")
+
+
+@pytest.fixture()
 def wallet_with_all_tokens(
-    wallet_with_native_token,
-    wallet_with_usdc,
-    wallet_with_wbtc,
-    wallet_with_link,
-    wallet_with_arb,
-) -> None:
+        wallet_with_native_token,
+        wallet_with_usdc,
+        wallet_with_wbtc,
+        wallet_with_link,
+        wallet_with_arb,
+        wallet_with_weth,
+        wallet_with_gmx
+    ) -> None:
     """Set up the wallet with all tokens needed for testing."""
     # This fixture combines all token fixtures to ensure the wallet has all needed tokens
     pass
@@ -512,7 +587,7 @@ def wallet_with_all_tokens(
 
 @pytest.fixture()
 def anvil_private_key() -> HexAddress:
-    """The default private key for the first Anvil test account."""
+    """The default private key for the first anvil test account."""
     return HexAddress(HexStr("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"))
 
 
@@ -555,7 +630,7 @@ def trading_manager(gmx_config_fork):
     return GMXTrading(gmx_config_fork)
 
 
-@pytest.fixture
+@pytest.fixture()
 def account_with_positions(chain_name):
     """Return an address known to have open positions on the specified chain."""
     addresses = {
@@ -563,3 +638,22 @@ def account_with_positions(chain_name):
         "avalanche": HexAddress(HexStr("0x83806fe5D4166868498eB95e32c972E07A5C065D")),
     }
     return addresses[chain_name]
+
+
+@pytest.fixture()
+def reader_contract(gmx_config_fork: GMXConfig):
+    return get_reader_contract(gmx_config_fork.get_read_config())
+
+
+@pytest.fixture()
+def data_store_contract(gmx_config_fork: GMXConfig):
+    return get_datastore_contract(gmx_config_fork.get_read_config())
+
+
+@pytest.fixture()
+def get_order_key(data_store_contract):
+    order_count = data_store_contract.functions.getBytes32Count(ORDER_LIST).call()
+    if order_count == 0:
+        raise Exception("No orders found")
+    order_key = data_store_contract.functions.getBytes32ValuesAt(ORDER_LIST, order_count - 1, order_count).call()[0]
+    return order_key

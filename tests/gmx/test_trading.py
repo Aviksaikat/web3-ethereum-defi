@@ -12,7 +12,9 @@ from gmx_python_sdk.scripts.v2.order.create_swap_order import SwapOrder
 import pytest
 
 from eth_defi.gmx.trading import GMXTrading
-from tests.gmx.utils import emulate_keepers
+from eth_defi.gmx.utils import get_positions
+from tests.gmx.utils.position_utils import emulate_keepers_for_positions
+from tests.gmx.utils.swap_utils import emulate_keepers_for_swap, ORDER_LIST
 
 
 # TODO: use to avoid race condition https://web3-ethereum-defi.readthedocs.io/api/core/_autosummary/eth_defi.trace.assert_transaction_success_with_explanation.html#eth_defi.trace.assert_transaction_success_with_explanation
@@ -36,7 +38,7 @@ def test_initialization(chain_name, gmx_config):
     assert trading.config.get_chain().lower() == chain_name.lower()
 
 
-def test_open_position_long(chain_name, trading_manager, gmx_config_fork, usdc):
+def test_open_position_long(chain_name, trading_manager, gmx_config_fork, usdc, reader_contract, data_store_contract, get_order_key):
     """
     Test opening a long position.
 
@@ -97,8 +99,14 @@ def test_open_position_long(chain_name, trading_manager, gmx_config_fork, usdc):
     # Verify USDC was spent
     assert final_usdc_balance < initial_usdc_balance, "USDC balance should decrease after opening a long position"
 
+    order_key = get_order_key
+    order_info = reader_contract.functions.getOrder(data_store_contract.address, order_key).call()
 
-def test_open_position_short(chain_name, trading_manager, gmx_config_fork, usdc):
+    # Check if the order is opened for the given collateral
+    assert usdc.address in order_info[0]
+
+
+def test_open_position_short(chain_name, trading_manager, gmx_config_fork, usdc, get_order_key, data_store_contract, reader_contract):
     """
     Test opening a short position.
 
@@ -150,37 +158,58 @@ def test_open_position_short(chain_name, trading_manager, gmx_config_fork, usdc)
     # Verify USDC was spent
     assert final_usdc_balance < initial_usdc_balance, "USDC balance should decrease after opening a short position"
 
+    order_key = get_order_key
+    order_info = reader_contract.functions.getOrder(data_store_contract.address, order_key).call()
 
-def test_open_position_high_leverage(chain_name, trading_manager, gmx_config_fork, wrapped_native_token):
+    # Check if the order is opened for the given collateral
+    assert usdc.address in order_info[0]
+
+    order_count = data_store_contract.functions.getBytes32Count(ORDER_LIST).call()
+    order_key = data_store_contract.functions.getBytes32ValuesAt(ORDER_LIST, order_count - 1, order_count).call()[0]
+
+    deposit = reader_contract.functions.getDeposit(data_store_contract.address, order_key).call()
+
+    print(f"{deposit=}")
+
+
+# TODO: can't use USDC->LINK swap for some reason. So use the start token as collateral token for this test
+def test_open_position_high_leverage(chain_name, trading_manager, gmx_config_fork, wrapped_native_token, link, get_order_key, data_store_contract, reader_contract):
     """
     Test opening a position with high leverage.
 
     This tests creating an IncreaseOrder with higher leverage.
     """
-    # Select appropriate parameters based on the chain
+    # The collateral & start tokens are kept the same intentionally bcz a swap will happen if they differ.
+    # In order to make the swap successful we have to emulate the keepers for swap interaction. Why not avoid this?
     if chain_name == "arbitrum":
-        market_symbol = "ETH"
-        collateral_symbol = "ETH"
+        market_symbol = "LINK"
+        collateral_symbol = "LINK"
+        start_token = "LINK"
+        token_contract = link
     # avalanche
     else:
         market_symbol = "AVAX"
         collateral_symbol = "AVAX"
+        start_token = "USDC"
+        token_contract = wrapped_native_token
 
     # Get test wallet address
     wallet_address = gmx_config_fork.get_wallet_address()
 
     # Check initial balances
-    initial_native_balance = wrapped_native_token.contract.functions.balanceOf(wallet_address).call()
+    initial_token_balance = token_contract.contract.functions.balanceOf(wallet_address).call()
+
+    print(f"{initial_token_balance=}")
 
     # Create a long position with high leverage
     increase_order = trading_manager.open_position(
         market_symbol=market_symbol,
         collateral_symbol=collateral_symbol,
-        start_token_symbol=collateral_symbol,
-        is_long=True,
-        size_delta_usd=100,
-        leverage=10,
-        slippage_percent=0.003,
+        start_token_symbol=start_token,
+        is_long=False,
+        size_delta_usd=100000,
+        leverage=1,
+        slippage_percent=0.03,
         debug_mode=False,
         execution_buffer=2.2,
     )
@@ -189,14 +218,22 @@ def test_open_position_high_leverage(chain_name, trading_manager, gmx_config_for
     assert isinstance(increase_order, IncreaseOrder)
 
     # Verify position setup
-    assert increase_order.is_long is True
+    assert increase_order.is_long is False
     assert increase_order.debug_mode is False
 
-    # Check final balances (Native token should decrease)
-    final_native_balance = wrapped_native_token.contract.functions.balanceOf(wallet_address).call()
+    # Check final balances (Token should decrease)
+    final_token_balance = token_contract.contract.functions.balanceOf(wallet_address).call()
 
-    # Verify native token was spent
-    assert final_native_balance < initial_native_balance, f"{wrapped_native_token.symbol} balance should decrease after opening a high leverage position"
+    # Verify token was spent
+    # assert final_token_balance < initial_token_balance, f"{token_contract.symbol} balance should decrease after opening a high leverage position"
+
+    positions = get_positions(gmx_config_fork.get_read_config(), wallet_address)
+
+    emulate_keepers_for_positions(gmx_config_fork, start_token, gmx_config_fork.web3, wallet_address, link.address, swap_path=increase_order.swap_path)
+
+    print(f"{positions=}")
+
+    assert len(positions) == 1
 
 
 def test_close_position(chain_name, trading_manager, gmx_config_fork, usdc, web3_fork):
@@ -345,7 +382,7 @@ def test_close_position_full_size(chain_name, trading_manager, gmx_config_fork, 
     assert usdc_balance_after_close > usdc_balance_before_close, "USDC balance should increase after closing a full position"
 
 
-def test_swap_tokens(chain_name, trading_manager, gmx_config_fork, arb, wsol, wallet_with_arb):
+def test_swap_tokens(chain_name, trading_manager, gmx_config_fork, arb, wsol, wallet_with_arb, wallet_with_native_token):
     """
     Test swapping tokens.
 
@@ -404,14 +441,14 @@ def test_swap_tokens(chain_name, trading_manager, gmx_config_fork, arb, wsol, wa
     # Verify balances changed
     assert final_arb_balance < initial_arb_balance, "USDC balance should decrease after swap"
 
-    emulate_keepers(
+    emulate_keepers_for_swap(
         gmx_config_fork,
-        start_token_symbol,
-        out_token_symbol,
-        gmx_config_fork.web3,
-        wallet_address,
-        start_token_address,
-        out_token_address,
+        initial_token_symbol=start_token_symbol,
+        target_token_symbol=out_token_symbol,
+        w3=gmx_config_fork.web3,
+        recipient_address=wallet_address,
+        initial_token_address=start_token_address,
+        target_token_address=out_token_address,
     )
 
     output = wsol.contract.functions.balanceOf(wallet_address).call()

@@ -81,6 +81,8 @@ class GMXTrading:
         # Process parameters
         order_parameters = OrderArgumentParser(write_config, is_increase=True).process_parameters_dictionary(parameters)
 
+        print(f"{order_parameters=}")
+
         # Create order with any additional parameters
         return IncreaseOrder(
             config=write_config,

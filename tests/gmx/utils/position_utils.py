@@ -1,11 +1,9 @@
 """
-This file aims to emulate the off-chain `Keeper`'s actions for swaps.
+This file aims to emulate the off-chain `Keeper`'s actions for increase position.
 """
-
 from decimal import Decimal
 from eth_abi import encode
 from eth_utils import keccak
-from gmx_python_sdk.scripts.v2.get.get_oracle_prices import OraclePrices
 from gmx_python_sdk.scripts.v2.gmx_utils import create_hash_string, get_reader_contract, get_datastore_contract
 from gmx_python_sdk.scripts.v2.utils.keys import IS_ORACLE_PROVIDER_ENABLED, MAX_ORACLE_REF_PRICE_DEVIATION_FACTOR
 from rich.console import Console
@@ -14,29 +12,11 @@ from web3 import Web3
 from eth_defi.gmx.config import GMXConfig
 from tests.gmx.utils.helpers import deploy_custom_oracle_provider, deploy_custom_oracle, override_storage_slot, execute_order
 
-# Create the ORDER_LIST key directly
 ORDER_LIST = create_hash_string("ORDER_LIST")
 print = Console().print
 
 
-# TOKENS: dict = {
-#     "USDC": to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
-#     "SOL": to_checksum_address("0x2bcC6D6CdBbDC0a4071e48bb3B969b06B3330c07"),
-#     "ARB": to_checksum_address("0x912ce59144191c1204e64559fe8253a0e49e6548"),
-#     "LINK": to_checksum_address("0xf97f4df75117a78c1A5a0DBb814Af92458539FB4"),
-# }
-#
-# INITIAL_TOKEN_SYMBOL: str = "ARB"
-# TARGET_TOKEN_SYMBOL: str = "SOL"
-#
-# initial_token_address: str = TOKENS[INITIAL_TOKEN_SYMBOL]
-# target_token_address: str = TOKENS[TARGET_TOKEN_SYMBOL]
-
-
-GMX_ADMIN = "0x7A967D114B8676874FA2cFC1C14F3095C88418Eb"
-
-
-def emulate_keepers_for_swap(gmx_config: GMXConfig, initial_token_symbol: str, target_token_symbol: str, w3: Web3, recipient_address: str, initial_token_address: str, target_token_address: str, debug_logs: bool = False):
+def emulate_keepers_for_positions(gmx_config: GMXConfig, initial_token_symbol: str, w3: Web3, recipient_address: str, initial_token_address: str, debug_logs: bool = False, swap_path: list = None):
     if debug_logs:
         erc20_abi = [
             {
@@ -75,24 +55,13 @@ def emulate_keepers_for_swap(gmx_config: GMXConfig, initial_token_symbol: str, t
         ]
 
         initial_token_contract = w3.eth.contract(address=initial_token_address, abi=erc20_abi)
-        target_contract = w3.eth.contract(address=target_token_address, abi=erc20_abi)
 
         decimals = initial_token_contract.functions.decimals().call()
         symbol = initial_token_contract.functions.symbol().call()
 
         # Check initial balances
         balance = initial_token_contract.functions.balanceOf(recipient_address).call()
-        print(f"Recipient {initial_token_symbol} balance: {Decimal(balance / 10**decimals)} {symbol}")
-
-        target_balance_before = target_contract.functions.balanceOf(recipient_address).call()
-        target_symbol = target_contract.functions.symbol().call()
-        target_decimals = target_contract.functions.decimals().call()
-
-        # Convert both values to Decimal BEFORE division
-        balance_decimal = Decimal(str(target_balance_before)) / Decimal(10**target_decimals)
-
-        # Format to avoid scientific notation and show proper decimal places
-        print(f"Recipient {target_token_symbol} balance before: {balance_decimal:.18f} {target_symbol}")
+        print(f"Recipient {initial_token_symbol} balance: {Decimal(balance / 10 ** decimals)} {symbol}")
 
     deployed: tuple = (None, None)  # (None, None)
     if not deployed[0]:
@@ -113,18 +82,19 @@ def emulate_keepers_for_swap(gmx_config: GMXConfig, initial_token_symbol: str, t
         assert ORDER_LIST.hex().removeprefix("0x") == "0x86f7cfd5d8f8404e5145c91bebb8484657420159dabd0753d6a59f3de3f7b8c1".removeprefix("0x"), "Order list mismatch"
         order_count = data_store.functions.getBytes32Count(ORDER_LIST).call()
         if order_count == 0:
-            raise Exception("No orders found")
+            msg = "No orders found"
+            raise Exception(msg)
 
         # Get the most recent order key
         order_key = data_store.functions.getBytes32ValuesAt(ORDER_LIST, order_count - 1, order_count).call()[0]
-        # print(f"Order created with key: {order_key.hex()}")
+        print(f"Order created with key: {order_key.hex()}")
 
         # for key in keys:
         #     print(f"Key: {key.hex()}")
 
         reader = get_reader_contract(config)
         order_info = reader.functions.getOrder(data_store.address, order_key).call()
-        # print(f"Order: {order_info}")
+        print(f"Order: {order_info}")
 
         # data_store_owner = "0xE7BfFf2aB721264887230037940490351700a068"
         controller = "0xf5F30B10141E1F63FC11eD772931A8294a591996"
@@ -137,7 +107,7 @@ def emulate_keepers_for_swap(gmx_config: GMXConfig, initial_token_symbol: str, t
         data_store.functions.setBool("0x1153e082323163af55b3003076402c9f890dda21455104e09a048bf53f1ab30c", True).transact({"from": controller})
 
         value = data_store.functions.getBool("0x1153e082323163af55b3003076402c9f890dda21455104e09a048bf53f1ab30c").call()
-        # print(f"Value: {value}")
+        print(f"Value: {value}")
 
         assert value, "Value should be true"
 
@@ -150,52 +120,67 @@ def emulate_keepers_for_swap(gmx_config: GMXConfig, initial_token_symbol: str, t
         # Enable the oracle provider
         data_store.functions.setBool(slot, True).transact({"from": controller})
         is_oracle_provider_enabled: bool = data_store.functions.getBool(slot).call()
-        # print(f"Value: {is_oracle_provider_enabled}")
+        print(f"Value: {is_oracle_provider_enabled}")
         assert is_oracle_provider_enabled, "Value should be true"
 
+        # TODO: This will change for various tokens apparently
         # pass the test `address expectedProvider = dataStore.getAddress(Keys.oracleProviderForTokenKey(token));` in Oracle.sol#L278
-        address_slot: str = "0x233a49594db4e7a962a8bd9ec7298b99d6464865065bd50d94232b61d213f16d"
+        address_slot: str = "0xee7ecf2be3f04718c696284b0fa544a16d84b94ffa10065f156555438db93488"
         data_store.functions.setAddress(address_slot, custom_oracle_provider).transact({"from": controller})
 
         new_address = data_store.functions.getAddress(address_slot).call()
-        # print(f"New address: {new_address}")
+        print(f"New address: {new_address}")
         # 0x0000000000000000000000005d6B84086DA6d4B0b6C0dF7E02f8a6A039226530
         assert new_address == custom_oracle_provider, "New address should be the oracle provider"
 
-        # need this to be set to pass the `Oracle._validatePrices` check. Key taken from anvil tx debugger
+        # need this to be set to pass the `Oracle._validatePrices` check. Key taken from tenderly tx debugger
         address_key: str = "0xf986b0f912da0acadea6308636145bb2af568ddd07eb6c76b880b8f341fef306"  # "0xf986b0f912da0acadea6308636145bb2af568ddd07eb6c76b880b8f341fef306"
 
         data_store.functions.setAddress(address_key, custom_oracle_provider).transact({"from": controller})
         value = data_store.functions.getAddress(address_key).call()
-        # print(f"Value: {value}")
+        print(f"Value: {value}")
         assert value == custom_oracle_provider, "Value should be recipient address"
 
         # ? Set another key value to pass the test in `Oracle.sol` this time for ChainlinkDataStreamProvider
         address_key: str = "0x659d3e479f4f2d295ea225e3d439a6b9d6fbf14a5cd4689e7d007fbab44acb8a"
         data_store.functions.setAddress(address_key, custom_oracle_provider).transact({"from": controller})
         value = data_store.functions.getAddress(address_key).call()
-        # print(f"Value: {value}")
+        print(f"Value: {value}")
         assert value == custom_oracle_provider, "Value should be recipient address"
 
         # ? Set the `maxRefPriceDeviationFactor` to pass tests in `Oracle.sol`
-        price_deviation_factor_key: str = f"0x{MAX_ORACLE_REF_PRICE_DEVIATION_FACTOR.hex()}"
+        # price_deviation_factor_key: str = f"0x{MAX_ORACLE_REF_PRICE_DEVIATION_FACTOR.hex()}"
         # * set some big value to pass the test
-        large_value: int = 10021573904618365809021423188717
-        data_store.functions.setUint(price_deviation_factor_key, large_value).transact({"from": controller})
-        value = data_store.functions.getUint(price_deviation_factor_key).call()
+        # large_value: int = 10021573904618365809021423188717
+        # data_store.functions.setUint(price_deviation_factor_key, large_value).transact({"from": controller})
+        # value = data_store.functions.getUint(price_deviation_factor_key).call()
         # print(f"Value: {value}")
-        assert value == large_value, f"Value should be {large_value}"
+        # assert value == large_value, f"Value should be {large_value}"
 
-        oracle_contract: str = "0x918b60ba71badfada72ef3a6c6f71d0c41d4785c"
-        token_b_max_value_slot: str = "0x636d2c90aa7802b40e3b1937e91c5450211eefbc7d3e39192aeb14ee03e3a958"
-        token_b_min_value_slot: str = "0x636d2c90aa7802b40e3b1937e91c5450211eefbc7d3e39192aeb14ee03e3a959"
+        # oracle_contract_address: str = "0x918b60ba71badfada72ef3a6c6f71d0c41d4785c"
+        # token_b_max_value_slot: str = "0x636d2c90aa7802b40e3b1937e91c5450211eefbc7d3e39192aeb14ee03e3a958"
+        # token_b_min_value_slot: str = "0x636d2c90aa7802b40e3b1937e91c5450211eefbc7d3e39192aeb14ee03e3a959"
 
-        oracle_prices = OraclePrices(chain=config.chain).get_recent_prices()
+        # TODO: Fix the pricing & add pricing for market tokens as well
+        # oracle_prices = OraclePrices(chain=parameters["chain"]).get_recent_prices()
 
-        max_price: int = int(oracle_prices[target_token_address]["maxPriceFull"])
-        min_price: int = int(oracle_prices[target_token_address]["minPriceFull"])
-        max_res = override_storage_slot(oracle_contract, token_b_max_value_slot, max_price, w3)
-        min_res = override_storage_slot(oracle_contract, token_b_min_value_slot, min_price, w3)
+        # # Index token price setup
+        # max_price: int = int(oracle_prices[TOKENS[INDEX_TOKEN_SYMBOL]]["maxPriceFull"])
+        # min_price: int = int(oracle_prices[TOKENS[INDEX_TOKEN_SYMBOL]]["minPriceFull"])
+        # max_res = override_storage_slot(oracle_contract_address, token_b_max_value_slot, max_price, w3)
+        # min_res = override_storage_slot(oracle_contract_address, token_b_min_value_slot, min_price, w3)
+
+        # # Short token price setup
+        # max_price = int(oracle_prices[TOKENS[COLLATERAL_TOKEN_SYMBOL]]["maxPriceFull"])
+        # min_price = int(oracle_prices[TOKENS[COLLATERAL_TOKEN_SYMBOL]]["minPriceFull"])
+        # max_res = override_storage_slot(oracle_contract_address, token_b_max_value_slot, max_price, w3)
+        # min_res = override_storage_slot(oracle_contract_address, token_b_min_value_slot, min_price, w3)
+
+        # # Start/Initial token price setup
+        # max_price = int(oracle_prices[TOKENS[INITIAL_TOKEN_SYMBOL]]["maxPriceFull"])
+        # min_price = int(oracle_prices[TOKENS[INITIAL_TOKEN_SYMBOL]]["minPriceFull"])
+        # max_res = override_storage_slot(oracle_contract_address, token_b_max_value_slot, max_price, w3)
+        # min_res = override_storage_slot(oracle_contract_address, token_b_min_value_slot, min_price, w3)
 
         # print(f"Max price: {max_price}")
         # print(f"Min price: {min_price}")
@@ -205,29 +190,18 @@ def emulate_keepers_for_swap(gmx_config: GMXConfig, initial_token_symbol: str, t
         # print(f"Order key: {order_key.hex()}")
         overrides = {
             "simulate": False,
-            "tokens": [
-                initial_token_address,
-                target_token_address
-            ]
+            "tokens": swap_path,
         }
         # Execute the order with oracle prices
-        execute_order(config=config, connection=w3, order_key=order_key, deployed_oracle_address=deployed_oracle_address, overrides=overrides)
+        execute_order(
+            config=config,
+            connection=w3,
+            order_key=order_key,
+            deployed_oracle_address=custom_oracle_provider,
+            overrides=overrides,
+            is_swap=False,
+        )
 
-        if debug_logs:
-            # Check the balances after execution
-            balance = initial_token_contract.functions.balanceOf(recipient_address).call()
-            symbol = initial_token_contract.functions.symbol().call()
-            print(f"Recipient {initial_token_symbol} balance after swap: {Decimal(balance / 10**decimals)} {symbol}")
-
-            target_balance_after = target_contract.functions.balanceOf(recipient_address).call()
-            symbol = target_contract.functions.symbol().call()
-            target_decimals = target_contract.functions.decimals().call()
-
-            balance_decimal = Decimal(str(target_balance_after)) / Decimal(10**target_decimals)
-
-            # Format to avoid scientific notation and show proper decimal places
-            print(f"Recipient {target_token_symbol} balance after swap: {balance_decimal:.18f} {target_symbol}")
-            print(f"Change in {target_token_symbol} balance: {Decimal((target_balance_after - target_balance_before) / 10**target_decimals):.18f}")
     except Exception as e:
         print(f"Error during swap process: {e!s}")
         raise e
